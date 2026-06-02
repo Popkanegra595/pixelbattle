@@ -3,129 +3,225 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Pixel Battle Debug</title>
+    <title>Pixel Battle | by k043gar</title>
     <style>
-        body { margin: 0; padding: 0; overflow: hidden; background: #e0e0e0; font-family: sans-serif; touch-action: none; }
-        canvas { display: block; background: #fff; }
-        .info {
-            position: fixed; top: 10px; left: 10px;
-            background: rgba(0,0,0,0.8); color: white;
-            padding: 10px; border-radius: 5px; font-size: 14px;
-            z-index: 1000; max-width: 80%;
+        body { 
+            margin: 0; padding: 0; overflow: hidden; 
+            background: #222; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
+            touch-action: none; 
         }
-        .ui-panel { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); display: flex; gap: 10px; z-index: 100; }
+        canvas { display: block; background: #000; cursor: crosshair; }
+        
+        /* Панель инструментов */
+        .ui-panel {
+            position: fixed; bottom: 20px; left: 50%;
+            transform: translateX(-50%);
+            display: flex; gap: 15px; padding: 10px 20px;
+            background: rgba(255,255,255,0.9);
+            backdrop-filter: blur(10px);
+            border-radius: 40px; box-shadow: 0 5px 30px rgba(0,0,0,0.5);
+            z-index: 100; align-items: center;
+        }
+        input[type="color"] {
+            -webkit-appearance: none; border: none; width: 40px; height: 40px;
+            border-radius: 50%; cursor: pointer; background: none;
+        }
+        input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+        input[type="color"]::-webkit-color-swatch { border: 3px solid #fff; border-radius: 50%; }
+
+        /* Статус подключения */
+        .status {
+            position: fixed; top: 10px; left: 10px;
+            background: rgba(0,0,0,0.7); color: white;
+            padding: 5px 15px; border-radius: 20px; font-size: 12px;
+            pointer-events: none; z-index: 200;
+        }
+
+        /* Кредиты */
+        .credit {
+            position: fixed; bottom: 10px; right: 15px;
+            color: rgba(255,255,255,0.5); font-size: 12px;
+            pointer-events: none; z-index: 200;
+        }
+
+        #btn-reset { border:none; background:none; font-size:24px; cursor: pointer; }
     </style>
 </head>
 <body>
 
-<div class="info" id="status">Инициализация скрипта...</div>
+<div class="status" id="status">Подключение...</div>
+<div class="credit">create by k043gar</div>
 
 <div class="ui-panel">
-    <input type="color" id="colorPicker" value="#000000">
-    <button id="btn-reset" style="padding:10px;">🏠 В центр</button>
+    <input type="color" id="colorPicker" value="#ff0000">
+    <button id="btn-reset" title="В центр">🏠</button>
 </div>
 
 <canvas id="canvas"></canvas>
 
 <script type="module">
-    // Импорт модулей
     import { initializeApp } from "https://www.gstatic.com/firebasejs/9.17.1/firebase-app.js";
-    import { getDatabase, ref, set, onChildAdded, onValue } from "https://www.gstatic.com/firebasejs/9.17.1/firebase-database.js";
+    import { getDatabase, ref, set, onChildAdded, onChildChanged, onValue } from "https://www.gstatic.com/firebasejs/9.17.1/firebase-database.js";
 
-    const status = document.getElementById('status');
+    const firebaseConfig = {
+      apiKey: "AIzaSyDApXhn_Q3dF9kU9E_4uBrdk0wlcd09RHU",
+      authDomain: "pixelbattale.firebaseapp.com",
+      projectId: "pixelbattale",
+      storageBucket: "pixelbattale.firebasestorage.app",
+      messagingSenderId: "791983193798",
+      appId: "1:791983193798:web:638379e16f2ab67aabe1c7",
+      measurementId: "G-VLD5EVYFF0",
+      databaseURL: "https://pixelbattale-default-rtdb.firebaseio.com/" 
+    };
 
-    // Логгер для вывода ошибок на экран
-    function log(msg, isError = false) {
-        console.log(msg);
-        status.innerText = msg;
-        if(isError) status.style.color = "red";
-    }
+    const app = initializeApp(firebaseConfig);
+    const db = getDatabase(app);
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const statusEl = document.getElementById('status');
 
-    try {
-        const firebaseConfig = {
-            apiKey: "AIzaSyDApXhn_Q3dF9kU9E_4uBrdk0wlcd09RHU",
-            authDomain: "pixelbattale.firebaseapp.com",
-            projectId: "pixelbattale",
-            storageBucket: "pixelbattale.firebasestorage.app",
-            messagingSenderId: "791983193798",
-            appId: "1:791983193798:web:638379e16f2ab67aabe1c7",
-            measurementId: "G-VLD5EVYFF0",
-            databaseURL: "https://pixelbattale-default-rtdb.firebaseio.com/"
-        };
+    const WORLD_SIZE = 1000;
+    let camera = { x: 500, y: 500, zoom: 10 };
+    let pixels = new Map();
+    let pointers = new Map();
+    let prevPinchDist = -1;
+    let isDragging = false;
+    let dragStart = { x: 0, y: 0 };
 
-        log("Подключение к Firebase...");
-        const app = initializeApp(firebaseConfig);
-        const db = getDatabase(app);
-
-        // Проверка подключения к базе
-        const connectedRef = ref(db, ".info/connected");
-        onValue(connectedRef, (snap) => {
-            if (snap.val() === true) {
-                log("Связь с базой установлена! Кликни на холст.");
-            } else {
-                log("Ожидание связи с сервером...");
-            }
-        });
-
-        // Настройки холста
-        const canvas = document.getElementById('canvas');
-        const ctx = canvas.getContext('2d');
-        const WORLD_SIZE = 1000;
-        let camera = { x: 500, y: 500, zoom: 5 };
-        let pixels = new Map();
-
-        function render() {
-            ctx.fillStyle = "#ccc";
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-            ctx.save();
-            ctx.translate(canvas.width/2, canvas.height/2);
-            ctx.scale(camera.zoom, camera.zoom);
-            ctx.translate(-camera.x, -camera.y);
-            
-            ctx.fillStyle = "white";
-            ctx.fillRect(0, 0, WORLD_SIZE, WORLD_SIZE);
-
-            pixels.forEach((color, key) => {
-                const [x, y] = key.split('_').map(Number);
-                ctx.fillStyle = color;
-                ctx.fillRect(x, y, 1, 1);
-            });
-            ctx.restore();
-        }
-
-        window.addEventListener('resize', () => {
-            canvas.width = window.innerWidth;
-            canvas.height = window.innerHeight;
-            render();
-        });
+    function resize() {
         canvas.width = window.innerWidth;
         canvas.height = window.innerHeight;
-
-        // Загрузка данных
-        const pixelsRef = ref(db, 'pixels');
-        onChildAdded(pixelsRef, (data) => {
-            const val = data.val();
-            pixels.set(`${val.x}_${val.y}`, val.color);
-            render();
-        });
-
-        // Рисование
-        canvas.addEventListener('pointerdown', (e) => {
-            const rect = canvas.getBoundingClientRect();
-            const worldX = Math.floor((e.clientX - canvas.width / 2) / camera.zoom + camera.x);
-            const worldY = Math.floor((e.clientY - canvas.height / 2) / camera.zoom + camera.y);
-
-            if (worldX >= 0 && worldX < WORLD_SIZE && worldY >= 0 && worldY < WORLD_SIZE) {
-                const color = document.getElementById('colorPicker').value;
-                set(ref(db, `pixels/${worldX}_${worldY}`), { x: worldX, y: worldY, color });
-            }
-        });
-
         render();
-
-    } catch (err) {
-        log("Критическая ошибка: " + err.message, true);
     }
+    window.addEventListener('resize', resize);
+    resize();
+
+    // Синхронизация с Firebase
+    onValue(ref(db, ".info/connected"), (snap) => {
+        statusEl.innerText = snap.val() ? "В сети" : "Переподключение...";
+    });
+
+    const pixelsRef = ref(db, 'pixels');
+    const updatePixelMap = (data) => {
+        const p = data.val();
+        pixels.set(`${p.x}_${p.y}`, p.color);
+        render();
+    };
+    onChildAdded(pixelsRef, updatePixelMap);
+    onChildChanged(pixelsRef, updatePixelMap);
+
+    // Отрисовка
+    function render() {
+        ctx.fillStyle = "#333"; // Фон за пределами холста
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.save();
+        ctx.translate(canvas.width / 2, canvas.height / 2);
+        ctx.scale(camera.zoom, camera.zoom);
+        ctx.translate(-camera.x, -camera.y);
+
+        // Белое полотно
+        ctx.fillStyle = "#FFFFFF";
+        ctx.fillRect(0, 0, WORLD_SIZE, WORLD_SIZE);
+
+        // Пиксели
+        pixels.forEach((color, key) => {
+            const [x, y] = key.split('_').map(Number);
+            ctx.fillStyle = color;
+            ctx.fillRect(x, y, 1, 1);
+        });
+
+        // Сетка при сильном зуме
+        if (camera.zoom > 15) {
+            ctx.lineWidth = 0.05;
+            ctx.strokeStyle = "rgba(0,0,0,0.1)";
+            ctx.beginPath();
+            for(let i=0; i<=WORLD_SIZE; i+=2) {
+                ctx.moveTo(i, 0); ctx.lineTo(i, WORLD_SIZE);
+                ctx.moveTo(0, i); ctx.lineTo(WORLD_SIZE, i);
+            }
+            ctx.stroke();
+        }
+
+        ctx.restore();
+    }
+
+    // Преобразование координат
+    function screenToWorld(sx, sy) {
+        return {
+            x: Math.floor((sx - canvas.width / 2) / camera.zoom + camera.x),
+            y: Math.floor((sy - canvas.height / 2) / camera.zoom + camera.y)
+        };
+    }
+
+    // Управление
+    canvas.addEventListener('pointerdown', (e) => {
+        pointers.set(e.pointerId, e);
+        isDragging = false;
+        dragStart = { x: e.clientX, y: e.clientY };
+    });
+
+    window.addEventListener('pointermove', (e) => {
+        if (!pointers.has(e.pointerId)) return;
+
+        const prev = pointers.get(e.pointerId);
+        const dx = e.clientX - prev.clientX;
+        const dy = e.clientY - prev.clientY;
+
+        // Если сдвинули палец/мышь более чем на 5 пикселей — считаем как перетаскивание
+        if (Math.hypot(e.clientX - dragStart.x, e.clientY - dragStart.y) > 5) {
+            isDragging = true;
+        }
+
+        if (pointers.size === 1) {
+            // Перемещение
+            camera.x -= dx / camera.zoom;
+            camera.y -= dy / camera.zoom;
+        } else if (pointers.size === 2) {
+            // Зум щипком (Pinch)
+            pointers.set(e.pointerId, e);
+            const p = Array.from(pointers.values());
+            const dist = Math.hypot(p[0].clientX - p[1].clientX, p[0].clientY - p[1].clientY);
+            if (prevPinchDist > 0) {
+                camera.zoom = Math.min(Math.max(camera.zoom * (dist / prevPinchDist), 0.5), 80);
+            }
+            prevPinchDist = dist;
+        }
+
+        pointers.set(e.pointerId, e);
+        render();
+    });
+
+    window.addEventListener('pointerup', (e) => {
+        if (!isDragging && pointers.size === 1) {
+            // Если это был просто клик — рисуем
+            const world = screenToWorld(e.clientX, e.clientY);
+            if (world.x >= 0 && world.x < WORLD_SIZE && world.y >= 0 && world.y < WORLD_SIZE) {
+                const color = document.getElementById('colorPicker').value;
+                set(ref(db, `pixels/${world.x}_${world.y}`), { x: world.x, y: world.y, color });
+            }
+        }
+        pointers.delete(e.pointerId);
+        if (pointers.size < 2) prevPinchDist = -1;
+    });
+
+    // Зум колесиком
+    canvas.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const factor = e.deltaY > 0 ? 0.9 : 1.1;
+        camera.zoom = Math.min(Math.max(camera.zoom * factor, 0.5), 80);
+        render();
+    }, { passive: false });
+
+    // Кнопка сброса
+    document.getElementById('btn-reset').onclick = () => {
+        camera = { x: 500, y: 500, zoom: 10 };
+        render();
+    };
+
+    // Отключение контекстного меню
+    canvas.oncontextmenu = (e) => e.preventDefault();
+
 </script>
 </body>
 </html>

@@ -3,219 +3,129 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Pixel Battle</title>
+    <title>Pixel Battle Debug</title>
     <style>
-        body { 
-            margin: 0; padding: 0; overflow: hidden; 
-            background: #e0e0e0; font-family: -apple-system, sans-serif; 
-            touch-action: none; 
-        }
-        canvas { display: block; background: #fff; cursor: crosshair; }
-        
-        .ui-panel {
-            position: fixed; bottom: 20px; left: 50%;
-            transform: translateX(-50%);
-            display: flex; gap: 15px; padding: 12px 20px;
-            background: rgba(255,255,255,0.9);
-            backdrop-filter: blur(10px);
-            border-radius: 30px; box-shadow: 0 5px 25px rgba(0,0,0,0.2);
-            z-index: 100; align-items: center;
-        }
-        input[type="color"] {
-            -webkit-appearance: none; border: none; width: 45px; height: 45px;
-            border-radius: 50%; cursor: pointer; background: none;
-        }
-        input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
-        input[type="color"]::-webkit-color-swatch { border: 3px solid #fff; border-radius: 50%; box-shadow: 0 0 5px rgba(0,0,0,0.2); }
-
+        body { margin: 0; padding: 0; overflow: hidden; background: #e0e0e0; font-family: sans-serif; touch-action: none; }
+        canvas { display: block; background: #fff; }
         .info {
             position: fixed; top: 10px; left: 10px;
-            background: rgba(0,0,0,0.6); color: white;
-            padding: 6px 15px; border-radius: 20px; font-size: 13px;
-            pointer-events: none; z-index: 200;
+            background: rgba(0,0,0,0.8); color: white;
+            padding: 10px; border-radius: 5px; font-size: 14px;
+            z-index: 1000; max-width: 80%;
         }
-        #btn-reset { border:none; background:none; font-size:24px; cursor: pointer; }
+        .ui-panel { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); display: flex; gap: 10px; z-index: 100; }
     </style>
 </head>
 <body>
 
-<div class="info" id="status">Подключение к серверу...</div>
+<div class="info" id="status">Инициализация скрипта...</div>
 
 <div class="ui-panel">
     <input type="color" id="colorPicker" value="#000000">
-    <button id="btn-reset" title="В центр">🏠</button>
+    <button id="btn-reset" style="padding:10px;">🏠 В центр</button>
 </div>
 
 <canvas id="canvas"></canvas>
 
 <script type="module">
+    // Импорт модулей
     import { initializeApp } from "https://www.gstatic.com/firebasejs/9.17.1/firebase-app.js";
-    import { getDatabase, ref, set, onChildAdded, onChildChanged, onValue } from "https://www.gstatic.com/firebasejs/9.17.1/firebase-database.js";
+    import { getDatabase, ref, set, onChildAdded, onValue } from "https://www.gstatic.com/firebasejs/9.17.1/firebase-database.js";
 
-    // --- ТВОЙ ОБНОВЛЕННЫЙ CONFIG ---
-    const firebaseConfig = {
-      apiKey: "AIzaSyDApXhn_Q3dF9kU9E_4uBrdk0wlcd09RHU",
-      authDomain: "pixelbattale.firebaseapp.com",
-      projectId: "pixelbattale",
-      storageBucket: "pixelbattale.firebasestorage.app",
-      messagingSenderId: "791983193798",
-      appId: "1:791983193798:web:638379e16f2ab67aabe1c7",
-      measurementId: "G-VLD5EVYFF0",
-      databaseURL: "https://pixelbattale-default-rtdb.firebaseio.com/" 
-    };
-
-    const app = initializeApp(firebaseConfig);
-    const db = getDatabase(app);
-    const canvas = document.getElementById('canvas');
-    const ctx = canvas.getContext('2d');
     const status = document.getElementById('status');
 
-    const WORLD_SIZE = 1000;
-    let camera = { x: 500, y: 500, zoom: 8 };
-    let pixels = new Map();
-    let pointers = new Map();
-    let prevDiff = -1;
-    let isMoving = false;
-    let startPos = { x: 0, y: 0 };
-
-    function resize() {
-        canvas.width = window.innerWidth;
-        canvas.height = window.innerHeight;
-        render();
+    // Логгер для вывода ошибок на экран
+    function log(msg, isError = false) {
+        console.log(msg);
+        status.innerText = msg;
+        if(isError) status.style.color = "red";
     }
-    window.addEventListener('resize', resize);
-    resize();
 
-    // --- ПРОВЕРКА ПОДКЛЮЧЕНИЯ ---
-    const connectedRef = ref(db, ".info/connected");
-    onValue(connectedRef, (snap) => {
-        if (snap.val() === true) {
-            status.innerText = "Подключено. Кликни, чтобы рисовать!";
-        } else {
-            status.innerText = "Поиск сервера...";
-        }
-    });
+    try {
+        const firebaseConfig = {
+            apiKey: "AIzaSyDApXhn_Q3dF9kU9E_4uBrdk0wlcd09RHU",
+            authDomain: "pixelbattale.firebaseapp.com",
+            projectId: "pixelbattale",
+            storageBucket: "pixelbattale.firebasestorage.app",
+            messagingSenderId: "791983193798",
+            appId: "1:791983193798:web:638379e16f2ab67aabe1c7",
+            measurementId: "G-VLD5EVYFF0",
+            databaseURL: "https://pixelbattale-default-rtdb.firebaseio.com/"
+        };
 
-    // --- СИНХРОНИЗАЦИЯ ПИКСЕЛЕЙ ---
-    const pixelsRef = ref(db, 'pixels');
-    
-    onChildAdded(pixelsRef, (data) => {
-        const val = data.val();
-        pixels.set(`${val.x}_${val.y}`, val.color);
-        render();
-    });
+        log("Подключение к Firebase...");
+        const app = initializeApp(firebaseConfig);
+        const db = getDatabase(app);
 
-    onChildChanged(pixelsRef, (data) => {
-        const val = data.val();
-        pixels.set(`${val.x}_${val.y}`, val.color);
-        render();
-    });
-
-    // --- ОТРИСОВКА ---
-    function render() {
-        ctx.fillStyle = "#e0e0e0";
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-        ctx.save();
-        ctx.translate(canvas.width / 2, canvas.height / 2);
-        ctx.scale(camera.zoom, camera.zoom);
-        ctx.translate(-camera.x, -camera.y);
-
-        // Белый фон холста
-        ctx.fillStyle = "white";
-        ctx.fillRect(0, 0, WORLD_SIZE, WORLD_SIZE);
-
-        // Пиксели
-        pixels.forEach((color, key) => {
-            const [x, y] = key.split('_').map(Number);
-            ctx.fillStyle = color;
-            ctx.fillRect(x, y, 1, 1);
+        // Проверка подключения к базе
+        const connectedRef = ref(db, ".info/connected");
+        onValue(connectedRef, (snap) => {
+            if (snap.val() === true) {
+                log("Связь с базой установлена! Кликни на холст.");
+            } else {
+                log("Ожидание связи с сервером...");
+            }
         });
 
-        // Сетка
-        if (camera.zoom > 10) {
-            ctx.lineWidth = 0.01;
-            ctx.strokeStyle = "rgba(0,0,0,0.15)";
-            ctx.beginPath();
-            for(let i=0; i<=WORLD_SIZE; i+=5) {
-                ctx.moveTo(i, 0); ctx.lineTo(i, WORLD_SIZE);
-                ctx.moveTo(0, i); ctx.lineTo(WORLD_SIZE, i);
-            }
-            ctx.stroke();
-        }
-        ctx.restore();
-    }
+        // Настройки холста
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const WORLD_SIZE = 1000;
+        let camera = { x: 500, y: 500, zoom: 5 };
+        let pixels = new Map();
 
-    // --- УПРАВЛЕНИЕ ---
-    canvas.addEventListener('pointerdown', (e) => {
-        pointers.set(e.pointerId, e);
-        isMoving = false;
-        startPos = { x: e.clientX, y: e.clientY };
-    });
+        function render() {
+            ctx.fillStyle = "#ccc";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.save();
+            ctx.translate(canvas.width/2, canvas.height/2);
+            ctx.scale(camera.zoom, camera.zoom);
+            ctx.translate(-camera.x, -camera.y);
+            
+            ctx.fillStyle = "white";
+            ctx.fillRect(0, 0, WORLD_SIZE, WORLD_SIZE);
 
-    canvas.addEventListener('pointermove', (e) => {
-        if (!pointers.has(e.pointerId)) return;
-        
-        const prevPointer = pointers.get(e.pointerId);
-        const dx = e.clientX - prevPointer.clientX;
-        const dy = e.clientY - prevPointer.clientY;
-
-        if (Math.abs(e.clientX - startPos.x) > 10 || Math.abs(e.clientY - startPos.y) > 10) {
-            isMoving = true;
+            pixels.forEach((color, key) => {
+                const [x, y] = key.split('_').map(Number);
+                ctx.fillStyle = color;
+                ctx.fillRect(x, y, 1, 1);
+            });
+            ctx.restore();
         }
 
-        if (pointers.size === 1) {
-            camera.x -= dx / camera.zoom;
-            camera.y -= dy / camera.zoom;
-        } else if (pointers.size === 2) {
-            pointers.set(e.pointerId, e);
-            const p = Array.from(pointers.values());
-            const curDiff = Math.sqrt(Math.pow(p[0].clientX - p[1].clientX, 2) + Math.pow(p[0].clientY - p[1].clientY, 2));
-            if (prevDiff > 0) {
-                camera.zoom *= (curDiff / prevDiff);
-                camera.zoom = Math.min(Math.max(camera.zoom, 0.5), 100);
-            }
-            prevDiff = curDiff;
-        }
-        pointers.set(e.pointerId, e);
-        render();
-    });
+        window.addEventListener('resize', () => {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            render();
+        });
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
 
-    canvas.addEventListener('pointerup', (e) => {
-        if (!isMoving && pointers.size === 1) {
-            const worldPos = screenToWorld(e.clientX, e.clientY);
-            if (worldPos.x >= 0 && worldPos.x < WORLD_SIZE && worldPos.y >= 0 && worldPos.y < WORLD_SIZE) {
+        // Загрузка данных
+        const pixelsRef = ref(db, 'pixels');
+        onChildAdded(pixelsRef, (data) => {
+            const val = data.val();
+            pixels.set(`${val.x}_${val.y}`, val.color);
+            render();
+        });
+
+        // Рисование
+        canvas.addEventListener('pointerdown', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const worldX = Math.floor((e.clientX - canvas.width / 2) / camera.zoom + camera.x);
+            const worldY = Math.floor((e.clientY - canvas.height / 2) / camera.zoom + camera.y);
+
+            if (worldX >= 0 && worldX < WORLD_SIZE && worldY >= 0 && worldY < WORLD_SIZE) {
                 const color = document.getElementById('colorPicker').value;
-                // Запись в базу
-                set(ref(db, `pixels/${worldPos.x}_${worldPos.y}`), {
-                    x: worldPos.x, y: worldPos.y, color: color
-                });
+                set(ref(db, `pixels/${worldX}_${worldY}`), { x: worldX, y: worldY, color });
             }
-        }
-        pointers.delete(e.pointerId);
-        if (pointers.size < 2) prevDiff = -1;
-    });
+        });
 
-    canvas.addEventListener('wheel', (e) => {
-        e.preventDefault();
-        const delta = e.deltaY > 0 ? 0.8 : 1.2;
-        camera.zoom = Math.min(Math.max(camera.zoom * delta, 0.5), 100);
         render();
-    }, { passive: false });
 
-    function screenToWorld(sx, sy) {
-        return {
-            x: Math.floor((sx - canvas.width / 2) / camera.zoom + camera.x),
-            y: Math.floor((sy - canvas.height / 2) / camera.zoom + camera.y)
-        };
+    } catch (err) {
+        log("Критическая ошибка: " + err.message, true);
     }
-
-    document.getElementById('btn-reset').onclick = () => {
-        camera = { x: 500, y: 500, zoom: 8 };
-        render();
-    };
-
-    canvas.oncontextmenu = (e) => e.preventDefault();
 </script>
 </body>
 </html>

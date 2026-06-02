@@ -32,14 +32,14 @@
             position: fixed; top: 10px; left: 10px;
             background: rgba(0,0,0,0.6); color: white;
             padding: 6px 15px; border-radius: 20px; font-size: 13px;
-            pointer-events: none; transition: opacity 0.3s;
+            pointer-events: none; z-index: 200;
         }
-        #btn-reset { border:none; background:none; font-size:24px; cursor: pointer; padding: 0; margin: 0; }
+        #btn-reset { border:none; background:none; font-size:24px; cursor: pointer; }
     </style>
 </head>
 <body>
 
-<div class="info" id="status">Загрузка холста...</div>
+<div class="info" id="status">Подключение к серверу...</div>
 
 <div class="ui-panel">
     <input type="color" id="colorPicker" value="#000000">
@@ -50,9 +50,9 @@
 
 <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/9.17.1/firebase-app.js";
-    import { getDatabase, ref, set, onChildAdded, onChildChanged } from "https://www.gstatic.com/firebasejs/9.17.1/firebase-database.js";
+    import { getDatabase, ref, set, onChildAdded, onChildChanged, onValue } from "https://www.gstatic.com/firebasejs/9.17.1/firebase-database.js";
 
-    // --- ТВОЙ FIREBASE CONFIG ---
+    // --- ТВОЙ ОБНОВЛЕННЫЙ CONFIG ---
     const firebaseConfig = {
       apiKey: "AIzaSyDApXhn_Q3dF9kU9E_4uBrdk0wlcd09RHU",
       authDomain: "pixelbattale.firebaseapp.com",
@@ -61,7 +61,6 @@
       messagingSenderId: "791983193798",
       appId: "1:791983193798:web:638379e16f2ab67aabe1c7",
       measurementId: "G-VLD5EVYFF0",
-      // База данных Realtime обычно имеет такой URL:
       databaseURL: "https://pixelbattale-default-rtdb.firebaseio.com/" 
     };
 
@@ -87,7 +86,17 @@
     window.addEventListener('resize', resize);
     resize();
 
-    // --- СИНХРОНИЗАЦИЯ ---
+    // --- ПРОВЕРКА ПОДКЛЮЧЕНИЯ ---
+    const connectedRef = ref(db, ".info/connected");
+    onValue(connectedRef, (snap) => {
+        if (snap.val() === true) {
+            status.innerText = "Подключено. Кликни, чтобы рисовать!";
+        } else {
+            status.innerText = "Поиск сервера...";
+        }
+    });
+
+    // --- СИНХРОНИЗАЦИЯ ПИКСЕЛЕЙ ---
     const pixelsRef = ref(db, 'pixels');
     
     onChildAdded(pixelsRef, (data) => {
@@ -112,18 +121,21 @@
         ctx.scale(camera.zoom, camera.zoom);
         ctx.translate(-camera.x, -camera.y);
 
+        // Белый фон холста
         ctx.fillStyle = "white";
         ctx.fillRect(0, 0, WORLD_SIZE, WORLD_SIZE);
 
+        // Пиксели
         pixels.forEach((color, key) => {
             const [x, y] = key.split('_').map(Number);
             ctx.fillStyle = color;
             ctx.fillRect(x, y, 1, 1);
         });
 
+        // Сетка
         if (camera.zoom > 10) {
-            ctx.lineWidth = 0.02;
-            ctx.strokeStyle = "rgba(0,0,0,0.1)";
+            ctx.lineWidth = 0.01;
+            ctx.strokeStyle = "rgba(0,0,0,0.15)";
             ctx.beginPath();
             for(let i=0; i<=WORLD_SIZE; i+=5) {
                 ctx.moveTo(i, 0); ctx.lineTo(i, WORLD_SIZE);
@@ -132,7 +144,6 @@
             ctx.stroke();
         }
         ctx.restore();
-        status.innerText = `X: ${Math.round(camera.x)} Y: ${Math.round(camera.y)} | Zoom: ${camera.zoom.toFixed(1)}x`;
     }
 
     // --- УПРАВЛЕНИЕ ---
@@ -175,5 +186,36 @@
             const worldPos = screenToWorld(e.clientX, e.clientY);
             if (worldPos.x >= 0 && worldPos.x < WORLD_SIZE && worldPos.y >= 0 && worldPos.y < WORLD_SIZE) {
                 const color = document.getElementById('colorPicker').value;
+                // Запись в базу
                 set(ref(db, `pixels/${worldPos.x}_${worldPos.y}`), {
-                    x: worldPos.x, y: wo
+                    x: worldPos.x, y: worldPos.y, color: color
+                });
+            }
+        }
+        pointers.delete(e.pointerId);
+        if (pointers.size < 2) prevDiff = -1;
+    });
+
+    canvas.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const delta = e.deltaY > 0 ? 0.8 : 1.2;
+        camera.zoom = Math.min(Math.max(camera.zoom * delta, 0.5), 100);
+        render();
+    }, { passive: false });
+
+    function screenToWorld(sx, sy) {
+        return {
+            x: Math.floor((sx - canvas.width / 2) / camera.zoom + camera.x),
+            y: Math.floor((sy - canvas.height / 2) / camera.zoom + camera.y)
+        };
+    }
+
+    document.getElementById('btn-reset').onclick = () => {
+        camera = { x: 500, y: 500, zoom: 8 };
+        render();
+    };
+
+    canvas.oncontextmenu = (e) => e.preventDefault();
+</script>
+</body>
+</html>
